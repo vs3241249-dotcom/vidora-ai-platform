@@ -21,6 +21,7 @@ load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+YOUTUBETRANSCRIPT_API_KEY = os.getenv("YOUTUBETRANSCRIPT_API_KEY")
 
 
 # ============================================================
@@ -828,368 +829,424 @@ def health():
 # YOUTUBE TRANSCRIPT
 # ============================================================
 
+YOUTUBETRANSCRIPT_API_URL = "https://youtubetranscript.dev/api/v2/transcribe"
+
+
+def normalize_external_transcript(data):
+    """Convert transcript API responses into Vidora's segment format."""
+
+    if not isinstance(data, dict):
+        return None
+
+    payload = data.get("data", data)
+    if not isinstance(payload, dict):
+        return None
+
+    raw_transcript = payload.get("transcript")
+    if not isinstance(raw_transcript, list):
+        return None
+
+    segments = []
+
+    for item in raw_transcript:
+        if not isinstance(item, dict):
+            continue
+
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+
+        try:
+            start = float(item.get("start", 0) or 0)
+        except (TypeError, ValueError):
+            start = 0.0
+
+        try:
+            duration = float(
+                item.get("duration", item.get("dur", 0)) or 0
+            )
+        except (TypeError, ValueError):
+            duration = 0.0
+
+        segments.append({
+            "text": text,
+            "start": start,
+            "duration": duration
+        })
+
+    if not segments:
+        return None
+
+    full_text = " ".join(
+        segment["text"] for segment in segments
+    ).strip()
+
+    if not full_text:
+        return None
+
+    language = payload.get("language", "")
+    language_code = payload.get("language_code", "")
+
+    return {
+        "transcript": full_text,
+        "segments": segments,
+        "language": language,
+        "language_code": language_code,
+        "is_generated": bool(payload.get("is_generated", False)),
+        "available_transcripts": payload.get(
+            "available_transcripts", []
+        )
+    }
+
+
+def fetch_transcript_external(video_id):
+    """Production transcript provider; works independently of Render's YouTube IP."""
+
+    if not YOUTUBETRANSCRIPT_API_KEY:
+        return {
+            "success": False,
+            "error": "YOUTUBETRANSCRIPT_API_KEY is not configured."
+        }
+
+    headers = {
+        "Authorization": f"Bearer {YOUTUBETRANSCRIPT_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "video": video_id,
+        "format": "timestamp"
+    }
+
+    try:
+        response = requests.post(
+            YOUTUBETRANSCRIPT_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=45
+        )
+
+        try:
+            result = response.json()
+        except ValueError:
+            result = {}
+
+        if response.status_code != 200:
+            error_message = ""
+
+            if isinstance(result, dict):
+                error_message = (
+                    result.get("message")
+                    or result.get("error")
+                    or result.get("detail")
+                    or ""
+                )
+
+            if isinstance(error_message, dict):
+                error_message = str(error_message)
+
+            print(
+                "External transcript provider error:",
+                response.status_code,
+                error_message
+            )
+
+            return {
+                "success": False,
+                "error": str(error_message)
+                    or f"Transcript provider returned HTTP {response.status_code}."
+            }
+
+        normalized = normalize_external_transcript(result)
+
+        if not normalized:
+            return {
+                "success": False,
+                "error": "Transcript provider returned no readable transcript."
+            }
+
+        print("Transcript source: external provider")
+
+        return {
+            "success": True,
+            **normalized
+        }
+
+    except requests.exceptions.Timeout:
+        print("External transcript provider timed out.")
+        return {
+            "success": False,
+            "error": "Transcript provider timed out."
+        }
+
+    except requests.exceptions.RequestException as error:
+        print("External transcript provider request error:", error)
+        return {
+            "success": False,
+            "error": "Could not connect to transcript provider."
+        }
+
+    except Exception as error:
+        print("External transcript provider unexpected error:", repr(error))
+        return {
+            "success": False,
+            "error": str(error)
+        }
+
+
+def fetch_transcript_local(video_id):
+    """Local/library fallback. Useful during local development and if YouTube permits the server IP."""
+
+    api = YouTubeTranscriptApi()
+    transcript_list = api.list(video_id)
+
+    transcript_objects = []
+    available_transcripts = []
+
+    for transcript in transcript_list:
+        transcript_objects.append(transcript)
+        available_transcripts.append({
+            "language": transcript.language,
+            "language_code": transcript.language_code,
+            "is_generated": transcript.is_generated
+        })
+
+    print("Available transcripts:", available_transcripts)
+
+    if not transcript_objects:
+        raise Exception(
+            "This video does not have captions or a transcript available."
+        )
+
+    preferred_languages = ["en", "hi", "gu"]
+    selected_transcript = None
+
+    # Preferred language + manual
+    for language_code in preferred_languages:
+        for transcript in transcript_objects:
+            if (
+                transcript.language_code == language_code
+                and not transcript.is_generated
+            ):
+                selected_transcript = transcript
+                break
+        if selected_transcript:
+            break
+
+    # Preferred language + generated
+    if selected_transcript is None:
+        for language_code in preferred_languages:
+            for transcript in transcript_objects:
+                if (
+                    transcript.language_code == language_code
+                    and transcript.is_generated
+                ):
+                    selected_transcript = transcript
+                    break
+            if selected_transcript:
+                break
+
+    # Any manual transcript
+    if selected_transcript is None:
+        for transcript in transcript_objects:
+            if not transcript.is_generated:
+                selected_transcript = transcript
+                break
+
+    # Any transcript
+    if selected_transcript is None:
+        selected_transcript = transcript_objects[0]
+
+    print(
+        "Selected transcript:",
+        selected_transcript.language,
+        selected_transcript.language_code,
+        "Generated:",
+        selected_transcript.is_generated
+    )
+
+    fetched_transcript = selected_transcript.fetch()
+    segments = []
+
+    for snippet in fetched_transcript:
+        text = str(snippet.text).strip()
+        if not text:
+            continue
+
+        segments.append({
+            "text": text,
+            "start": float(snippet.start),
+            "duration": float(snippet.duration)
+        })
+
+    full_text = " ".join(
+        segment["text"] for segment in segments
+    ).strip()
+
+    if not full_text:
+        raise Exception(
+            "Captions were found, but no readable transcript text was available."
+        )
+
+    print("Transcript source: local youtube-transcript-api")
+
+    return {
+        "success": True,
+        "transcript": full_text,
+        "segments": segments,
+        "language": selected_transcript.language,
+        "language_code": selected_transcript.language_code,
+        "is_generated": selected_transcript.is_generated,
+        "available_transcripts": available_transcripts
+    }
+
+
 @app.route(
     "/api/transcript",
     methods=["POST"]
 )
 def get_transcript():
 
-    data = request.get_json(
-        silent=True
-    )
+    data = request.get_json(silent=True)
 
     if not data or "url" not in data:
-
         return jsonify({
-
-            "success":
-                False,
-
-            "error":
-                "YouTube URL is required."
+            "success": False,
+            "error": "YouTube URL is required."
         }), 400
 
-    url = str(
-        data["url"]
-    ).strip()
+    url = str(data["url"]).strip()
 
     if not url:
-
         return jsonify({
-
-            "success":
-                False,
-
-            "error":
-                "Please paste a YouTube video URL."
+            "success": False,
+            "error": "Please paste a YouTube video URL."
         }), 400
 
-    video_id = extract_video_id(
-        url
-    )
+    video_id = extract_video_id(url)
 
     if not video_id:
-
         return jsonify({
-
-            "success":
-                False,
-
-            "error":
-                (
-                    "Invalid YouTube URL. Please enter a valid "
-                    "YouTube video, Shorts, Live, Embed, or "
-                    "youtu.be link."
-                )
+            "success": False,
+            "error": (
+                "Invalid YouTube URL. Please enter a valid "
+                "YouTube video, Shorts, Live, Embed, or youtu.be link."
+            )
         }), 400
 
-    try:
+    print("Transcript request received for video:", video_id)
 
-        api = YouTubeTranscriptApi()
+    # ------------------------------------------------------------
+    # 1. Production provider
+    # ------------------------------------------------------------
+    external_result = fetch_transcript_external(video_id)
 
-        transcript_list = api.list(
-            video_id
-        )
-
-        transcript_objects = []
-
-        available_transcripts = []
-
-        for transcript in transcript_list:
-
-            transcript_objects.append(
-                transcript
-            )
-
-            available_transcripts.append({
-
-                "language":
-                    transcript.language,
-
-                "language_code":
-                    transcript.language_code,
-
-                "is_generated":
-                    transcript.is_generated
-            })
-
-        print(
-            "Available transcripts:",
-            available_transcripts
-        )
-
-        if not transcript_objects:
-
-            return jsonify({
-
-                "success":
-                    False,
-
-                "error":
-                    (
-                        "This video does not have captions "
-                        "or a transcript available."
-                    )
-            }), 404
-
-        preferred_languages = [
-
-            "en",
-            "hi",
-            "gu"
-        ]
-
-        selected_transcript = None
-
-        # ----------------------------------------------------
-        # Preferred language + manual
-        # ----------------------------------------------------
-
-        for language_code in preferred_languages:
-
-            for transcript in transcript_objects:
-
-                if (
-                    transcript.language_code
-                    ==
-                    language_code
-                    and
-                    not transcript.is_generated
-                ):
-
-                    selected_transcript = transcript
-
-                    break
-
-            if selected_transcript:
-                break
-
-        # ----------------------------------------------------
-        # Preferred language + generated
-        # ----------------------------------------------------
-
-        if selected_transcript is None:
-
-            for language_code in preferred_languages:
-
-                for transcript in transcript_objects:
-
-                    if (
-                        transcript.language_code
-                        ==
-                        language_code
-                        and
-                        transcript.is_generated
-                    ):
-
-                        selected_transcript = transcript
-
-                        break
-
-                if selected_transcript:
-                    break
-
-        # ----------------------------------------------------
-        # Any manual transcript
-        # ----------------------------------------------------
-
-        if selected_transcript is None:
-
-            for transcript in transcript_objects:
-
-                if not transcript.is_generated:
-
-                    selected_transcript = transcript
-
-                    break
-
-        # ----------------------------------------------------
-        # Any transcript
-        # ----------------------------------------------------
-
-        if selected_transcript is None:
-
-            selected_transcript = (
-                transcript_objects[0]
-            )
-
-        print(
-            "Selected transcript:",
-            selected_transcript.language,
-            selected_transcript.language_code,
-            "Generated:",
-            selected_transcript.is_generated
-        )
-
-        fetched_transcript = (
-            selected_transcript.fetch()
-        )
-
-        segments = []
-
-        for snippet in fetched_transcript:
-
-            text = str(
-                snippet.text
-            ).strip()
-
-            if not text:
-                continue
-
-            segments.append({
-
-                "text":
-                    text,
-
-                "start":
-                    float(
-                        snippet.start
-                    ),
-
-                "duration":
-                    float(
-                        snippet.duration
-                    )
-            })
-
-        full_text = " ".join(
-
-            segment["text"]
-
-            for segment in segments
-
-        ).strip()
-
-        if not full_text:
-
-            return jsonify({
-
-                "success":
-                    False,
-
-                "error":
-                    (
-                        "Captions were found, but "
-                        "no readable transcript text "
-                        "was available."
-                    )
-            }), 404
-
+    if external_result.get("success"):
         return jsonify({
-
-            "success":
-                True,
-
-            "video_id":
-                video_id,
-
-            "transcript":
-                full_text,
-
-            "segments":
-                segments,
-
-            "language":
-                selected_transcript.language,
-
-            "language_code":
-                selected_transcript.language_code,
-
-            "is_generated":
-                selected_transcript.is_generated,
-
-            "available_transcripts":
-                available_transcripts,
-
-            "message":
-                "Transcript fetched successfully."
+            "success": True,
+            "video_id": video_id,
+            "transcript": external_result["transcript"],
+            "segments": external_result["segments"],
+            "language": external_result.get("language", ""),
+            "language_code": external_result.get("language_code", ""),
+            "is_generated": external_result.get("is_generated", False),
+            "available_transcripts": external_result.get(
+                "available_transcripts", []
+            ),
+            "message": "Transcript fetched successfully."
         })
 
+    print(
+        "External transcript provider unavailable:",
+        external_result.get("error", "Unknown error")
+    )
+
+    # ------------------------------------------------------------
+    # 2. Local fallback
+    # ------------------------------------------------------------
+    try:
+        local_result = fetch_transcript_local(video_id)
+
+        if local_result.get("success"):
+            return jsonify({
+                "success": True,
+                "video_id": video_id,
+                "transcript": local_result["transcript"],
+                "segments": local_result["segments"],
+                "language": local_result.get("language", ""),
+                "language_code": local_result.get("language_code", ""),
+                "is_generated": local_result.get("is_generated", False),
+                "available_transcripts": local_result.get(
+                    "available_transcripts", []
+                ),
+                "message": "Transcript fetched successfully."
+            })
+
     except Exception as error:
-
         error_text = str(error)
+        error_lower = error_text.lower()
 
-        error_lower = (
-            error_text.lower()
-        )
-
-        print(
-            "Transcript Error:",
-            repr(error)
-        )
+        print("Local transcript Error:", repr(error))
 
         if (
-            "transcript is disabled"
-            in error_lower
-            or
-            "transcriptsdisabled"
-            in error_lower
+            "transcript is disabled" in error_lower
+            or "transcriptsdisabled" in error_lower
         ):
-
             message = (
                 "Captions are disabled for this video. "
                 "Please try another video."
             )
 
         elif (
-            "no transcript"
-            in error_lower
-            or
-            "no transcript found"
-            in error_lower
-            or
-            "notranscriptfound"
-            in error_lower
+            "no transcript" in error_lower
+            or "no transcript found" in error_lower
+            or "notranscriptfound" in error_lower
         ):
-
             message = (
-                "No usable transcript was found for this "
-                "video. Please try another video with captions."
+                "No usable transcript was found for this video. "
+                "Please try another video with captions."
             )
 
         elif (
-            "video unavailable"
-            in error_lower
-            or
-            "video is unavailable"
-            in error_lower
+            "video unavailable" in error_lower
+            or "video is unavailable" in error_lower
         ):
-
-            message = (
-                "This YouTube video is unavailable or private."
-            )
+            message = "This YouTube video is unavailable or private."
 
         elif (
-            "429"
-            in error_lower
-            or
-            "too many requests"
-            in error_lower
+            "429" in error_lower
+            or "too many requests" in error_lower
+            or "requestblocked" in error_lower
+            or "ipblocked" in error_lower
+            or "youtube blocked" in error_lower
+            or "you are being rate limited" in error_lower
         ):
-
             message = (
-                "YouTube is temporarily limiting requests. "
-                "Please wait a little and try again."
+                "YouTube is temporarily limiting transcript requests. "
+                "The production transcript service will be used when configured."
             )
 
         else:
-
             message = (
-                "We couldn't fetch the transcript from YouTube "
-                "right now. Please try again or another video."
+                "We couldn't fetch the transcript right now. "
+                "Please try again or another video."
             )
 
+        provider_error = external_result.get("error", "")
+
         return jsonify({
+            "success": False,
+            "error": message,
+            "details": {
+                "transcript_provider": provider_error,
+                "local_fallback": error_text
+            }
+        }), 502
 
-            "success":
-                False,
-
-            "error":
-                message,
-
-            "details":
-                error_text
-        }), 404
+    return jsonify({
+        "success": False,
+        "error": "No usable transcript was found for this video."
+    }), 404
 
 
 # ============================================================
