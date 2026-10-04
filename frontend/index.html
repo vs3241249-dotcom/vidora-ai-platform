@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    >
+
+    <meta name="theme-color" content="#080b14">
+
+    <title>Vidora AI — Turn Videos Into Knowledge</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- ==============================
+         Background
+    =============================== -->
+
+    <div class="background-glow glow-one"></div>
+    <div class="background-glow glow-two"></div>
+
+
+    <!-- ==============================
+         Navbar
+    =============================== -->
+
+    <header class="navbar">
+
+        <div class="brand">
+
+            <div class="brand-icon">
+                ✦
+            </div>
+
+            <div class="brand-text">
+                <h2>Vidora</h2>
+                <span>AI VIDEO LEARNING</span>
+            </div>
+
+        </div>
+
+
+        <div class="nav-actions">
+
+            <button
+                class="theme-button"
+                id="themeButton"
+                type="button"
+                title="Switch theme"
+                aria-label="Switch theme"
+            >
+                🌙
+            </button>
+
+            <button
+                class="history-button"
+                id="historyButton"
+                type="button"
+            >
+                🕘 History
+            </button>
+
+        </div>
+
+    </header>
+
+
+    <!-- ==============================
+         History Drawer
+    =============================== -->
+
+    <aside
+        class="history-drawer"
+        id="historyDrawer"
+        aria-hidden="true"
+    >
+
+        <div class="history-header">
+
+            <div>
+                <span class="small-label">YOUR VIDEOS</span>
+                <h2>History</h2>
+            </div>
+
+            <button
+                class="drawer-close"
+                id="historyClose"
+                type="button"
+                aria-label="Close history"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <div
+            class="history-list"
+            id="historyList"
+        >
+
+            <div class="empty-history">
+
+                <div class="empty-history-icon">
+                    🕘
+                </div>
+
+                <h3>No videos yet</h3>
+
+                <p>
+                    Your generated videos will appear here.
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <button
+            class="clear-history-button"
+            id="clearHistoryButton"
+            type="button"
+        >
+            Clear History
+        </button>
+
+    </aside>
+
+
+    <div
+        class="drawer-overlay"
+        id="drawerOverlay"
+    ></div>
+
+
+    <!-- ==============================
+         Main
+    =============================== -->
+
+    <main>
+
+
+        <!-- ==============================
+             Hero
+        =============================== -->
+
+        <section class="hero">
+
+            <div class="hero-badge">
+                <span>✨</span>
+                AI-powered video learning
+            </div>
+
+
+            <h1>
+                Turn any video into
+                <span>knowledge.</span>
+            </h1>
+
+
+            <p class="hero-description">
+                Paste a YouTube video and transform it into
+                structured notes, summaries, explanations,
+                key points and exam-ready material.
+            </p>
+
+
+            <!-- URL Card -->
+
+            <div class="url-card">
+
+                <div class="url-input-wrapper">
+
+                    <span class="youtube-icon">
+                        ▶
+                    </span>
+
+                    <input
+                        type="text"
+                        id="youtubeUrl"
+                        placeholder="Paste your YouTube link here..."
+                        autocomplete="off"
+                        spellcheck="false"
+                    >
+
+                    <button
+                        class="clear-button"
+                        id="clearButton"
+                        type="button"
+                        title="Clear"
+                        aria-label="Clear URL"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <button
+                    class="generate-button"
+                    id="generateButton"
+                    type="button"
+                >
+
+                    <span class="generate-icon">
+                        ✦
+                    </span>
+
+                    <span class="generate-text">
+                        Generate
+                    </span>
+
+                </button>
+
+            </div>
+
+
+            <!-- Input error -->
+
+            <div
+                class="input-error"
+                id="inputError"
+            ></div>
+
+
+            <!-- Supported -->
+
+            <div class="supported">
+
+                <span>Works with</span>
+
+                <div class="supported-item">
+                    ▶ YouTube
+                </div>
+
+                <div class="supported-item">
+                    ⚡ AI
+                </div>
+
+                <div class="supported-item">
+                    🌐 3 Languages
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ==============================
+             Current Video
+        =============================== -->
+
+        <section
+            class="video-section hidden"
+            id="videoSection"
+        >
+
+            <div class="video-card">
+
+                <div class="video-thumbnail-wrapper">
+
+                    <img
+                        id="videoThumbnail"
+                        class="video-thumbnail"
+                        src=""
+                        alt="YouTube video thumbnail"
+                    >
+
+                    <div class="video-play">
+                        ▶
+                    </div>
+
+                </div>
+
+
+                <div class="video-info">
+
+                    <span class="video-label">
+                        CURRENT VIDEO
+                    </span>
+
+                    <h2 id="videoTitle">
+                        YouTube Video
+                    </h2>
+
+                    <p id="videoStatus">
+                        Transcript ready for AI learning.
+                    </p>
+
+                    <button
+                        class="new-video-button"
+                        id="newVideoButton"
+                        type="button"
+                    >
+                        🔄 New Generate
+                    </button>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ==============================
+             Learning Features
+        =============================== -->
+
+        <section
+            class="features"
+            id="featuresSection"
+        >
+
+            <div class="section-heading">
+
+                <span class="small-label">
+                    EVERYTHING YOU NEED
+                </span>
+
+                <h2>
+                    One video.
+                    <span>Many ways to learn.</span>
+                </h2>
+
+                <p>
+                    Generate different learning formats from
+                    the same video content.
+                </p>
+
+            </div>
+
+
+            <div class="feature-grid">
+
+
+                <!-- Full Notes -->
+
+                <button
+                    class="feature-card featured-card"
+                    data-feature="notes"
+                    type="button"
+                >
+
+                    <div class="feature-icon purple">
+                        📝
+                    </div>
+
+                    <div class="feature-content">
+
+                        <h3>Full Notes</h3>
+
+                        <p>
+                            Turn the complete video content into
+                            structured, readable notes.
+                        </p>
+
+                    </div>
+
+                    <span class="feature-arrow">
+                        →
+                    </span>
+
+                </button>
+
+
+                <!-- Summary -->
+
+                <button
+                    class="feature-card"
+                    data-feature="summary"
+                    type="button"
+                >
+
+                    <div class="feature-icon blue">
+                        ⚡
+                    </div>
+
+                    <div class="feature-content">
+
+                        <h3>Summarize</h3>
+
+                        <p>
+                            Get the most important information
+                            in a short and clear summary.
+                        </p>
+
+                    </div>
+
+                    <span class="feature-arrow">
+                        →
+                    </span>
+
+                </button>
+
+
+                <!-- Explain -->
+
+                <button
+                    class="feature-card"
+                    data-feature="explain"
+                    type="button"
+                >
+
+                    <div class="feature-icon green">
+                        📚
+                    </div>
+
+                    <div class="feature-content">
+
+                        <h3>Explain in Detail</h3>
+
+                        <p>
+                            Understand important topics with
+                            simple and detailed explanations.
+                        </p>
+
+                    </div>
+
+                    <span class="feature-arrow">
+                        →
+                    </span>
+
+                </button>
+
+
+                <!-- Key Points -->
+
+                <button
+                    class="feature-card"
+                    data-feature="keypoints"
+                    type="button"
+                >
+
+                    <div class="feature-icon orange">
+                        🎯
+                    </div>
+
+                    <div class="feature-content">
+
+                        <h3>Key Points</h3>
+
+                        <p>
+                            Quickly find the most important
+                            ideas and concepts from the video.
+                        </p>
+
+                    </div>
+
+                    <span class="feature-arrow">
+                        →
+                    </span>
+
+                </button>
+
+
+                <!-- Ask AI -->
+
+                <button
+                    class="feature-card"
+                    data-feature="ask"
+                    type="button"
+                >
+
+                    <div class="feature-icon pink">
+                        ❓
+                    </div>
+
+                    <div class="feature-content">
+
+                        <h3>Ask AI</h3>
+
+                        <p>
+                            Ask questions about the current
+                            video and get context-aware answers.
+                        </p>
+
+                    </div>
+
+                    <span class="feature-arrow">
+                        →
+                    </span>
+
+                </button>
+
+
+                <!-- Exam -->
+
+                <button
+                    class="feature-card"
+                    data-feature="exam"
+                    type="button"
+                >
+
+                    <div class="feature-icon cyan">
+                        🧠
+                    </div>
+
+                    <div class="feature-content">
+
+                        <h3>Exam &amp; MCQ Mode</h3>
+
+                        <p>
+                            Generate exam-important questions
+                            and MCQs directly from the video.
+                        </p>
+
+                    </div>
+
+                    <span class="feature-arrow">
+                        →
+                    </span>
+
+                </button>
+
+            </div>
+
+        </section>
+
+
+        <!-- ==============================
+             Results
+        =============================== -->
+
+        <section
+            class="results-section hidden"
+            id="resultsSection"
+        >
+
+            <div class="results-header">
+
+                <div>
+
+                    <span
+                        class="small-label"
+                        id="resultLabel"
+                    >
+                        AI RESULT
+                    </span>
+
+                    <h2 id="resultTitle">
+                        Your result
+                    </h2>
+
+                </div>
+
+
+                <button
+                    class="result-close"
+                    id="resultClose"
+                    type="button"
+                    title="Close result"
+                >
+                    ×
+                </button>
+
+            </div>
+
+
+            <!-- AI loading -->
+
+            <div
+                class="ai-loading hidden"
+                id="aiLoading"
+            >
+
+                <div class="loading-orb">
+                    ✦
+                </div>
+
+                <h3 id="loadingTitle">
+                    Vidora is thinking...
+                </h3>
+
+                <p id="loadingText">
+                    Understanding your video content.
+                </p>
+
+                <div class="loading-bar">
+                    <span></span>
+                </div>
+
+            </div>
+
+
+            <!-- Normal AI result -->
+
+            <div
+                class="result-content"
+                id="resultContent"
+            ></div>
+
+
+            <!-- Ask AI -->
+
+            <div
+                class="ask-box hidden"
+                id="askBox"
+            >
+
+                <div class="ask-input-wrapper">
+
+                    <input
+                        type="text"
+                        id="askInput"
+                        placeholder="Ask anything about this video..."
+                        autocomplete="off"
+                    >
+
+                    <button
+                        id="askButton"
+                        type="button"
+                    >
+                        Ask
+                    </button>
+
+                </div>
+
+                <div
+                    class="ask-answer"
+                    id="askAnswer"
+                ></div>
+
+            </div>
+
+
+            <!-- Exam / MCQ -->
+
+            <div
+                class="exam-container hidden"
+                id="examContainer"
+            ></div>
+
+        </section>
+
+
+        <!-- ==============================
+             How It Works
+        =============================== -->
+
+        <section class="how-section">
+
+            <div class="section-heading center">
+
+                <span class="small-label">
+                    SIMPLE PROCESS
+                </span>
+
+                <h2>
+                    From video to
+                    <span>understanding.</span>
+                </h2>
+
+                <p>
+                    Three simple steps to turn a video into
+                    useful learning material.
+                </p>
+
+            </div>
+
+
+            <div class="steps">
+
+                <div class="step">
+
+                    <div class="step-number">
+                        01
+                    </div>
+
+                    <h3>Paste</h3>
+
+                    <p>
+                        Add a valid YouTube video link.
+                    </p>
+
+                </div>
+
+
+                <div class="step-line"></div>
+
+
+                <div class="step">
+
+                    <div class="step-number">
+                        02
+                    </div>
+
+                    <h3>Process</h3>
+
+                    <p>
+                        Vidora extracts and processes the
+                        video's transcript.
+                    </p>
+
+                </div>
+
+
+                <div class="step-line"></div>
+
+
+                <div class="step">
+
+                    <div class="step-number">
+                        03
+                    </div>
+
+                    <h3>Learn</h3>
+
+                    <p>
+                        Choose notes, summary, explanations,
+                        questions or ask AI.
+                    </p>
+
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <!-- ==============================
+         Footer
+    =============================== -->
+
+    <footer>
+
+        <div class="footer-brand">
+            ✦ Vidora AI
+        </div>
+
+        <p>
+            Learn smarter. Understand faster.
+        </p>
+
+<div class="footer-contact">
+    <span>👤 Vaibhav Solanke</span>
+
+    <a href="tel:+919081219487">
+        📞 9081219487
+    </a>
+
+    <a
+        href="https://www.instagram.com/wtf_.vaibhuuuu/"
+        target="_blank"
+        rel="noopener noreferrer"
+    >
+        🆔 wtf_.vaibhuuuu
+    </a>
+</div>
+
+        <span class="copyright">
+            © 2026 Vidora AI
+        </span>
+
+    </footer>
+
+
+    <!-- ==============================
+         Toast
+    =============================== -->
+
+    <div
+        class="toast"
+        id="toast"
+    ></div>
+
+
+    <!-- JavaScript -->
+
+    <script src="script.js"></script>
+
+</body>
+</html>
