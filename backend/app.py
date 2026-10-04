@@ -833,73 +833,265 @@ YOUTUBETRANSCRIPT_API_URL = "https://youtubetranscript.dev/api/v2/transcribe"
 
 
 def normalize_external_transcript(data):
-    """Convert transcript API responses into Vidora's segment format."""
+    """Convert YouTubeTranscript.dev V2 response into Vidora format."""
 
     if not isinstance(data, dict):
         return None
 
-    payload = data.get("data", data)
+    payload = data.get("data", {})
     if not isinstance(payload, dict):
         return None
 
-    raw_transcript = payload.get("transcript")
-    if not isinstance(raw_transcript, list):
+    transcript_data = payload.get("transcript", {})
+    if not isinstance(transcript_data, dict):
+        return None
+
+    full_text = str(
+        transcript_data.get("text", "")
+    ).strip()
+
+    raw_segments = transcript_data.get("segments", [])
+
+    if not full_text and not raw_segments:
         return None
 
     segments = []
 
-    for item in raw_transcript:
-        if not isinstance(item, dict):
-            continue
+    if isinstance(raw_segments, list):
+        for index, item in enumerate(raw_segments):
 
-        text = str(item.get("text", "")).strip()
-        if not text:
-            continue
+            if not isinstance(item, dict):
+                continue
 
-        try:
-            start = float(item.get("start", 0) or 0)
-        except (TypeError, ValueError):
-            start = 0.0
+            text = str(item.get("text", "")).strip()
 
-        try:
-            duration = float(
-                item.get("duration", item.get("dur", 0)) or 0
-            )
-        except (TypeError, ValueError):
+            if not text:
+                continue
+
+            try:
+                start_ms = float(
+                    item.get("start", 0) or 0
+                )
+            except (TypeError, ValueError):
+                start_ms = 0.0
+
+            # YouTubeTranscript.dev returns timestamp values
+            # in milliseconds.
+            start = start_ms / 1000.0
+
+            # Duration is not always supplied.
+            # Calculate it from the next segment when possible.
             duration = 0.0
 
-        segments.append({
-            "text": text,
-            "start": start,
-            "duration": duration
-        })
+            if index + 1 < len(raw_segments):
+                next_item = raw_segments[index + 1]
 
-    if not segments:
-        return None
+                if isinstance(next_item, dict):
+                    try:
+                        next_start_ms = float(
+                            next_item.get("start", 0) or 0
+                        )
 
-    full_text = " ".join(
-        segment["text"] for segment in segments
-    ).strip()
+                        duration = max(
+                            0.0,
+                            (next_start_ms / 1000.0) - start
+                        )
+
+                    except (TypeError, ValueError):
+                        duration = 0.0
+
+            segments.append({
+                "text": text,
+                "start": start,
+                "duration": duration
+            })
+
+    # If API did not return usable segments but returned text,
+    # create one basic segment so Vidora can still process it.
+    if not segments and full_text:
+        segments = [{
+            "text": full_text,
+            "start": 0.0,
+            "duration": 0.0
+        }]
+
+    if not full_text:
+        full_text = " ".join(
+            segment["text"]
+            for segment in segments
+        ).strip()
 
     if not full_text:
         return None
 
-    language = payload.get("language", "")
-    language_code = payload.get("language_code", "")
+    language = str(
+        transcript_data.get("language", "")
+    ).strip()
+
+    source = str(
+        transcript_data.get("source", "")
+    ).strip()
 
     return {
         "transcript": full_text,
         "segments": segments,
         "language": language,
-        "language_code": language_code,
-        "is_generated": bool(payload.get("is_generated", False)),
-        "available_transcripts": payload.get(
-            "available_transcripts", []
-        )
+        "language_code": language,
+        "is_generated": source == "auto",
+        "available_transcripts": []
     }
 
 
 def fetch_transcript_external(video_id):
+    """Fetch transcript through YouTubeTranscript.dev V2."""
+
+    if not YOUTUBETRANSCRIPT_API_KEY:
+        return {
+            "success": False,
+            "error": "YOUTUBETRANSCRIPT_API_KEY is not configured."
+        }
+
+    headers = {
+        "Authorization": (
+            f"Bearer {YOUTUBETRANSCRIPT_API_KEY}"
+        ),
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "video": video_id,
+        "source": "auto",
+        "format": {
+            "timestamp": True,
+            "paragraphs": False,
+            "words": False
+        }
+    }
+
+    try:
+
+        response = requests.post(
+            YOUTUBETRANSCRIPT_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=45
+        )
+
+        try:
+            result = response.json()
+        except ValueError:
+            result = {}
+
+        print(
+            "YouTubeTranscript.dev status:",
+            response.status_code
+        )
+
+        if response.status_code != 200:
+
+            error_message = ""
+
+            if isinstance(result, dict):
+
+                error_message = (
+                    result.get("message")
+                    or result.get("error")
+                    or result.get("detail")
+                    or ""
+                )
+
+                # V2 errors can contain:
+                # {"code": "...", "message": "..."}
+                if isinstance(error_message, dict):
+                    error_message = (
+                        error_message.get("message")
+                        or str(error_message)
+                    )
+
+            print(
+                "External transcript provider error:",
+                response.status_code,
+                error_message
+            )
+
+            return {
+                "success": False,
+                "error": (
+                    str(error_message)
+                    or
+                    f"Transcript provider returned "
+                    f"HTTP {response.status_code}."
+                )
+            }
+
+        normalized = normalize_external_transcript(
+            result
+        )
+
+        if not normalized:
+
+            print(
+                "External transcript provider returned "
+                "an unreadable response."
+            )
+
+            return {
+                "success": False,
+                "error": (
+                    "Transcript provider returned "
+                    "no readable transcript."
+                )
+            }
+
+        print(
+            "Transcript source: YouTubeTranscript.dev"
+        )
+
+        return {
+            "success": True,
+            **normalized
+        }
+
+    except requests.exceptions.Timeout:
+
+        print(
+            "External transcript provider timed out."
+        )
+
+        return {
+            "success": False,
+            "error": (
+                "Transcript provider timed out."
+            )
+        }
+
+    except requests.exceptions.RequestException as error:
+
+        print(
+            "External transcript provider "
+            "request error:",
+            repr(error)
+        )
+
+        return {
+            "success": False,
+            "error": (
+                "Could not connect to transcript provider."
+            )
+        }
+
+    except Exception as error:
+
+        print(
+            "External transcript provider "
+            "unexpected error:",
+            repr(error)
+        )
+
+        return {
+            "success": False,
+            "error": str(error)
+        }
     """Production transcript provider; works independently of Render's YouTube IP."""
 
     if not YOUTUBETRANSCRIPT_API_KEY:
