@@ -829,11 +829,11 @@ def health():
 # YOUTUBE TRANSCRIPT
 # ============================================================
 
-YOUTUBETRANSCRIPT_API_URL = "https://youtubetranscript.dev/api/v2/transcribe"
+YOUTUBETRANSCRIPT_API_URL = "https://www.youtubetranscript.dev/api/v2/transcribe"
 
 
 def normalize_external_transcript(data):
-    """Convert YouTubeTranscript.dev V2 response into Vidora format."""
+    """Convert YouTubeTranscript.dev V2 responses into Vidora's format."""
 
     if not isinstance(data, dict):
         return None
@@ -843,107 +843,106 @@ def normalize_external_transcript(data):
         return None
 
     transcript_data = payload.get("transcript", {})
-    if not isinstance(transcript_data, dict):
-        return None
 
-    full_text = str(
-        transcript_data.get("text", "")
-    ).strip()
+    # Current V2 response format:
+    # data.transcript = {text, language, source, segments}
+    if isinstance(transcript_data, dict):
+        full_text = str(
+            transcript_data.get("text", "") or ""
+        ).strip()
 
-    raw_segments = transcript_data.get("segments", [])
+        language = str(
+            transcript_data.get("language", "") or ""
+        ).strip()
 
-    if not full_text and not raw_segments:
+        source = str(
+            transcript_data.get("source", "") or ""
+        ).strip()
+
+        raw_segments = transcript_data.get("segments", [])
+
+    # Compatibility with an older/alternate response where transcript
+    # itself is a list of transcript segments.
+    elif isinstance(transcript_data, list):
+        full_text = ""
+        language = str(payload.get("language", "") or "").strip()
+        source = str(payload.get("source", "") or "").strip()
+        raw_segments = transcript_data
+    else:
         return None
 
     segments = []
 
     if isinstance(raw_segments, list):
-        for index, item in enumerate(raw_segments):
-
+        for item in raw_segments:
             if not isinstance(item, dict):
                 continue
 
-            text = str(item.get("text", "")).strip()
-
+            text = str(item.get("text", "") or "").strip()
             if not text:
                 continue
 
             try:
-                start_ms = float(
-                    item.get("start", 0) or 0
-                )
+                start_ms = float(item.get("start", 0) or 0)
             except (TypeError, ValueError):
                 start_ms = 0.0
 
-            # YouTubeTranscript.dev returns timestamp values
-            # in milliseconds.
-            start = start_ms / 1000.0
+            # V2 uses milliseconds for start/end.
+            # Also accept seconds for compatibility if a provider returns
+            # a duration field instead.
+            try:
+                end_ms = float(item.get("end", 0) or 0)
+            except (TypeError, ValueError):
+                end_ms = 0.0
 
-            # Duration is not always supplied.
-            # Calculate it from the next segment when possible.
-            duration = 0.0
+            if end_ms > start_ms:
+                duration = (end_ms - start_ms) / 1000.0
+            else:
+                try:
+                    duration_value = float(
+                        item.get("duration", item.get("dur", 0)) or 0
+                    )
+                except (TypeError, ValueError):
+                    duration_value = 0.0
 
-            if index + 1 < len(raw_segments):
-                next_item = raw_segments[index + 1]
-
-                if isinstance(next_item, dict):
-                    try:
-                        next_start_ms = float(
-                            next_item.get("start", 0) or 0
-                        )
-
-                        duration = max(
-                            0.0,
-                            (next_start_ms / 1000.0) - start
-                        )
-
-                    except (TypeError, ValueError):
-                        duration = 0.0
+                duration = duration_value
 
             segments.append({
                 "text": text,
-                "start": start,
-                "duration": duration
+                "start": start_ms / 1000.0,
+                "duration": max(0.0, duration)
             })
 
-    # If API did not return usable segments but returned text,
-    # create one basic segment so Vidora can still process it.
-    if not segments and full_text:
+    if not full_text and segments:
+        full_text = " ".join(
+            segment["text"] for segment in segments
+        ).strip()
+
+    if not full_text:
+        return None
+
+    # If the provider gives text but no segments, keep the transcript usable.
+    if not segments:
         segments = [{
             "text": full_text,
             "start": 0.0,
             "duration": 0.0
         }]
 
-    if not full_text:
-        full_text = " ".join(
-            segment["text"]
-            for segment in segments
-        ).strip()
-
-    if not full_text:
-        return None
-
-    language = str(
-        transcript_data.get("language", "")
-    ).strip()
-
-    source = str(
-        transcript_data.get("source", "")
-    ).strip()
+    language_code = language
 
     return {
         "transcript": full_text,
         "segments": segments,
         "language": language,
-        "language_code": language,
-        "is_generated": source == "auto",
+        "language_code": language_code,
+        "is_generated": source == "asr",
         "available_transcripts": []
     }
 
 
 def fetch_transcript_external(video_id):
-    """Fetch transcript through YouTubeTranscript.dev V2."""
+    """Fetch a YouTube transcript through the production transcript provider."""
 
     if not YOUTUBETRANSCRIPT_API_KEY:
         return {
@@ -952,9 +951,7 @@ def fetch_transcript_external(video_id):
         }
 
     headers = {
-        "Authorization": (
-            f"Bearer {YOUTUBETRANSCRIPT_API_KEY}"
-        ),
+        "Authorization": f"Bearer {YOUTUBETRANSCRIPT_API_KEY}",
         "Content-Type": "application/json"
     }
 
@@ -969,7 +966,6 @@ def fetch_transcript_external(video_id):
     }
 
     try:
-
         response = requests.post(
             YOUTUBETRANSCRIPT_API_URL,
             headers=headers,
@@ -988,59 +984,61 @@ def fetch_transcript_external(video_id):
         )
 
         if response.status_code != 200:
-
             error_message = ""
 
             if isinstance(result, dict):
-
-                error_message = (
+                error_value = (
                     result.get("message")
                     or result.get("error")
                     or result.get("detail")
                     or ""
                 )
 
-                # V2 errors can contain:
-                # {"code": "...", "message": "..."}
-                if isinstance(error_message, dict):
+                if isinstance(error_value, dict):
                     error_message = (
-                        error_message.get("message")
-                        or str(error_message)
+                        error_value.get("message")
+                        or error_value.get("detail")
+                        or str(error_value)
                     )
+                else:
+                    error_message = str(error_value)
+
+            # Give useful provider-specific messages in Render logs/API.
+            status_messages = {
+                401: "Invalid or unauthorized YouTubeTranscript.dev API key.",
+                402: "YouTubeTranscript.dev credits/payment are required or exhausted.",
+                404: "No captions were found for this video.",
+                429: "YouTubeTranscript.dev rate limit exceeded."
+            }
+
+            if not error_message:
+                error_message = status_messages.get(
+                    response.status_code,
+                    f"Transcript provider returned HTTP {response.status_code}."
+                )
 
             print(
-                "External transcript provider error:",
+                "YouTubeTranscript.dev error:",
                 response.status_code,
                 error_message
             )
 
             return {
                 "success": False,
-                "error": (
-                    str(error_message)
-                    or
-                    f"Transcript provider returned "
-                    f"HTTP {response.status_code}."
-                )
+                "status_code": response.status_code,
+                "error": error_message
             }
 
-        normalized = normalize_external_transcript(
-            result
-        )
+        normalized = normalize_external_transcript(result)
 
         if not normalized:
-
             print(
-                "External transcript provider returned "
-                "an unreadable response."
+                "YouTubeTranscript.dev returned HTTP 200 but no readable transcript."
             )
-
             return {
                 "success": False,
-                "error": (
-                    "Transcript provider returned "
-                    "no readable transcript."
-                )
+                "status_code": response.status_code,
+                "error": "Transcript provider returned no readable transcript."
             }
 
         print(
@@ -1053,133 +1051,29 @@ def fetch_transcript_external(video_id):
         }
 
     except requests.exceptions.Timeout:
-
         print(
-            "External transcript provider timed out."
+            "YouTubeTranscript.dev request timed out."
         )
-
-        return {
-            "success": False,
-            "error": (
-                "Transcript provider timed out."
-            )
-        }
-
-    except requests.exceptions.RequestException as error:
-
-        print(
-            "External transcript provider "
-            "request error:",
-            repr(error)
-        )
-
-        return {
-            "success": False,
-            "error": (
-                "Could not connect to transcript provider."
-            )
-        }
-
-    except Exception as error:
-
-        print(
-            "External transcript provider "
-            "unexpected error:",
-            repr(error)
-        )
-
-        return {
-            "success": False,
-            "error": str(error)
-        }
-    """Production transcript provider; works independently of Render's YouTube IP."""
-
-    if not YOUTUBETRANSCRIPT_API_KEY:
-        return {
-            "success": False,
-            "error": "YOUTUBETRANSCRIPT_API_KEY is not configured."
-        }
-
-    headers = {
-        "Authorization": f"Bearer {YOUTUBETRANSCRIPT_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "video": video_id,
-        "format": "timestamp"
-    }
-
-    try:
-        response = requests.post(
-            YOUTUBETRANSCRIPT_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=45
-        )
-
-        try:
-            result = response.json()
-        except ValueError:
-            result = {}
-
-        if response.status_code != 200:
-            error_message = ""
-
-            if isinstance(result, dict):
-                error_message = (
-                    result.get("message")
-                    or result.get("error")
-                    or result.get("detail")
-                    or ""
-                )
-
-            if isinstance(error_message, dict):
-                error_message = str(error_message)
-
-            print(
-                "External transcript provider error:",
-                response.status_code,
-                error_message
-            )
-
-            return {
-                "success": False,
-                "error": str(error_message)
-                    or f"Transcript provider returned HTTP {response.status_code}."
-            }
-
-        normalized = normalize_external_transcript(result)
-
-        if not normalized:
-            return {
-                "success": False,
-                "error": "Transcript provider returned no readable transcript."
-            }
-
-        print("Transcript source: external provider")
-
-        return {
-            "success": True,
-            **normalized
-        }
-
-    except requests.exceptions.Timeout:
-        print("External transcript provider timed out.")
         return {
             "success": False,
             "error": "Transcript provider timed out."
         }
 
     except requests.exceptions.RequestException as error:
-        print("External transcript provider request error:", error)
+        print(
+            "YouTubeTranscript.dev request error:",
+            repr(error)
+        )
         return {
             "success": False,
             "error": "Could not connect to transcript provider."
         }
 
     except Exception as error:
-        print("External transcript provider unexpected error:", repr(error))
+        print(
+            "YouTubeTranscript.dev unexpected error:",
+            repr(error)
+        )
         return {
             "success": False,
             "error": str(error)
@@ -1187,7 +1081,7 @@ def fetch_transcript_external(video_id):
 
 
 def fetch_transcript_local(video_id):
-    """Local/library fallback. Useful during local development and if YouTube permits the server IP."""
+    """Local YouTubeTranscriptApi fallback for development."""
 
     api = YouTubeTranscriptApi()
     transcript_list = api.list(video_id)
@@ -1203,7 +1097,10 @@ def fetch_transcript_local(video_id):
             "is_generated": transcript.is_generated
         })
 
-    print("Available transcripts:", available_transcripts)
+    print(
+        "Available transcripts:",
+        available_transcripts
+    )
 
     if not transcript_objects:
         raise Exception(
@@ -1280,7 +1177,9 @@ def fetch_transcript_local(video_id):
             "Captions were found, but no readable transcript text was available."
         )
 
-    print("Transcript source: local youtube-transcript-api")
+    print(
+        "Transcript source: local youtube-transcript-api"
+    )
 
     return {
         "success": True,
@@ -1326,7 +1225,10 @@ def get_transcript():
             )
         }), 400
 
-    print("Transcript request received for video:", video_id)
+    print(
+        "Transcript request received for video:",
+        video_id
+    )
 
     # ------------------------------------------------------------
     # 1. Production provider
@@ -1348,97 +1250,93 @@ def get_transcript():
             "message": "Transcript fetched successfully."
         })
 
+    provider_error = external_result.get(
+        "error",
+        "Unknown transcript provider error."
+    )
+
+    provider_status = external_result.get(
+        "status_code"
+    )
+
     print(
-        "External transcript provider unavailable:",
-        external_result.get("error", "Unknown error")
+        "YouTubeTranscript.dev FAILED:",
+        provider_status,
+        provider_error
     )
 
     # ------------------------------------------------------------
-    # 2. Local fallback
+    # 2. Local fallback ONLY when the production provider key is
+    #    not configured. On Render, the external provider should be
+    #    the source of truth so YouTube IP blocking is not involved.
     # ------------------------------------------------------------
-    try:
-        local_result = fetch_transcript_local(video_id)
+    if not YOUTUBETRANSCRIPT_API_KEY:
+        try:
+            local_result = fetch_transcript_local(video_id)
 
-        if local_result.get("success"):
-            return jsonify({
-                "success": True,
-                "video_id": video_id,
-                "transcript": local_result["transcript"],
-                "segments": local_result["segments"],
-                "language": local_result.get("language", ""),
-                "language_code": local_result.get("language_code", ""),
-                "is_generated": local_result.get("is_generated", False),
-                "available_transcripts": local_result.get(
-                    "available_transcripts", []
-                ),
-                "message": "Transcript fetched successfully."
-            })
+            if local_result.get("success"):
+                return jsonify({
+                    "success": True,
+                    "video_id": video_id,
+                    "transcript": local_result["transcript"],
+                    "segments": local_result["segments"],
+                    "language": local_result.get("language", ""),
+                    "language_code": local_result.get("language_code", ""),
+                    "is_generated": local_result.get("is_generated", False),
+                    "available_transcripts": local_result.get(
+                        "available_transcripts", []
+                    ),
+                    "message": "Transcript fetched successfully."
+                })
 
-    except Exception as error:
-        error_text = str(error)
-        error_lower = error_text.lower()
-
-        print("Local transcript Error:", repr(error))
-
-        if (
-            "transcript is disabled" in error_lower
-            or "transcriptsdisabled" in error_lower
-        ):
-            message = (
-                "Captions are disabled for this video. "
-                "Please try another video."
+        except Exception as error:
+            print(
+                "Local transcript Error:",
+                repr(error)
             )
 
-        elif (
-            "no transcript" in error_lower
-            or "no transcript found" in error_lower
-            or "notranscriptfound" in error_lower
-        ):
-            message = (
-                "No usable transcript was found for this video. "
-                "Please try another video with captions."
-            )
-
-        elif (
-            "video unavailable" in error_lower
-            or "video is unavailable" in error_lower
-        ):
-            message = "This YouTube video is unavailable or private."
-
-        elif (
-            "429" in error_lower
-            or "too many requests" in error_lower
-            or "requestblocked" in error_lower
-            or "ipblocked" in error_lower
-            or "youtube blocked" in error_lower
-            or "you are being rate limited" in error_lower
-        ):
-            message = (
-                "YouTube is temporarily limiting transcript requests. "
-                "The production transcript service will be used when configured."
-            )
-
-        else:
-            message = (
-                "We couldn't fetch the transcript right now. "
-                "Please try again or another video."
-            )
-
-        provider_error = external_result.get("error", "")
-
-        return jsonify({
-            "success": False,
-            "error": message,
-            "details": {
-                "transcript_provider": provider_error,
-                "local_fallback": error_text
-            }
-        }), 502
+    # ------------------------------------------------------------
+    # Production failure response
+    # ------------------------------------------------------------
+    if provider_status == 401:
+        message = (
+            "Transcript service authentication failed. "
+            "Please check the YOUTUBETRANSCRIPT_API_KEY in Render."
+        )
+    elif provider_status == 402:
+        message = (
+            "Transcript service credits are unavailable. "
+            "Please check your YouTubeTranscript.dev account."
+        )
+    elif provider_status == 404:
+        message = (
+            "No captions were found for this video. "
+            "Please try another video with captions."
+        )
+    elif provider_status == 429:
+        message = (
+            "Transcript service is temporarily rate-limited. "
+            "Please try again shortly."
+        )
+    elif provider_status == 200:
+        message = (
+            "Transcript service returned an unreadable response. "
+            "Please try again or another video."
+        )
+    else:
+        message = (
+            "We couldn't fetch the transcript right now. "
+            "Please try again or another video."
+        )
 
     return jsonify({
         "success": False,
-        "error": "No usable transcript was found for this video."
-    }), 404
+        "error": message,
+        "details": {
+            "transcript_provider": provider_error,
+            "provider_status": provider_status
+        }
+    }), 502
 
 
 # ============================================================
